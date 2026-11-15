@@ -43,10 +43,14 @@ export function validateTimeline(film) {
       !Number.isInteger(film.width) || !Number.isInteger(film.height) ||
       !Array.isArray(film.shots) || !film.shots.length) throw new Error("Invalid timeline");
   let cursor = 0;
+  const seen = new Set();
   for (const shot of film.shots) {
+    if (typeof shot !== "object" || shot === null) throw new Error("Invalid timeline");
     if (!/^scene-\d{3,}$/.test(shot.id) || shot.startFrame !== cursor ||
         !Number.isInteger(shot.frames) || shot.frames <= 0 ||
         shot.endFrame !== cursor + shot.frames) throw new Error("Noncontiguous timeline");
+    if (seen.has(shot.id)) throw new Error(`Duplicate shot id: ${shot.id}`);
+    seen.add(shot.id);
     cursor = shot.endFrame;
   }
   if (cursor !== film.totalFrames) throw new Error("Total frame mismatch");
