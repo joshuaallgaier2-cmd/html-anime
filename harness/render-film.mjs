@@ -20,6 +20,25 @@ export function validateRenderConfig(film) {
   return true;
 }
 
+export function checkComposition(actual, shot, film) {
+  const problems = [];
+  if (!actual.id) {
+    problems.push("data-composition-id root missing");
+  } else if (!actual.hasTimeline) {
+    problems.push(`no GSAP timeline registered under "${actual.id}"`);
+  }
+  if (actual.duration !== shot.seconds) {
+    problems.push(`data-duration ${actual.duration} (expected ${shot.seconds})`);
+  }
+  if (actual.width !== film.width) {
+    problems.push(`data-width ${actual.width} (expected ${film.width})`);
+  }
+  if (actual.height !== film.height) {
+    problems.push(`data-height ${actual.height} (expected ${film.height})`);
+  }
+  return problems;
+}
+
 export async function renderShots(timelinePath, htmlDir, outputDir, options = {}) {
   const film = JSON.parse(await readFile(resolve(timelinePath), "utf8"));
   validateRenderConfig(film);
@@ -58,9 +77,8 @@ export async function renderShots(timelinePath, htmlDir, outputDir, options = {}
             hasTimeline: Boolean(id && window.__timelines?.[id])
           };
         });
-        if (!actual.hasTimeline || actual.duration !== shot.seconds ||
-            actual.width !== film.width || actual.height !== film.height)
-          throw new Error(`${shot.id}: HTML composition metadata or GSAP timeline invalid`);
+        const problems = checkComposition(actual, shot, film);
+        if (problems.length > 0) throw new Error(`${shot.id}: ${problems.join("; ")}`);
         const destination = join(output, `${shot.id}.mp4`);
         encoder = spawn("ffmpeg", [
           "-y", "-f", "image2pipe", "-framerate", String(film.fps),
