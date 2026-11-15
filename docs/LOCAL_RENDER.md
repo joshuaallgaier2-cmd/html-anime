@@ -20,6 +20,8 @@ npm run film:render
 npm run film:assemble -- build/preview/timeline.json build/rendered build/final/moonlight-promise.mp4
 ```
 
+Assembly re-encodes each shot into `<output>.parts/` and removes that directory when it finishes, whether or not the assembly succeeded. Set `HTML_ANIME_KEEP_PARTS=1` to keep the intermediate parts for debugging, for example `HTML_ANIME_KEEP_PARTS=1 npm run film:assemble -- build/preview/timeline.json build/rendered build/final/moonlight-promise.mp4`.
+
 This renderer seeks the paused GSAP timeline to each exact 24 FPS frame and pipes screenshots into FFmpeg. Rendering 1,440 frames at 1920×1080 can take significant CPU time and disk space. Each scene must have a `data-composition-id="film"` root and a synchronous `window.__timelines.film` GSAP timeline. For reproducibility the renderer serves GSAP from the pinned local npm dependency rather than the CDN.
 
 **Known limitations:** HTML/SVG preview art is deliberately basic, no TTS/music, no LLM-generated art, no scene QA, and no security sandbox for untrusted generated HTML. Only render trusted local scenes. The render/assembly path needs execution and visual review before production use.

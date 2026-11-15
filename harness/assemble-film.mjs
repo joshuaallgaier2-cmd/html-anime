@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
@@ -53,7 +53,9 @@ export function validateTimeline(film) {
   return true;
 }
 
-export async function assembleFilm(timelinePath, shotsDirectory, outputPath) {
+export async function assembleFilm(timelinePath, shotsDirectory, outputPath, options = {}) {
+  const runCommand = options.runCommand ?? run;
+  const keepParts = options.keepParts ?? process.env.HTML_ANIME_KEEP_PARTS === "1";
   const film = JSON.parse(await readFile(resolve(timelinePath), "utf8"));
   validateTimeline(film);
   const out = resolve(outputPath);
@@ -61,34 +63,41 @@ export async function assembleFilm(timelinePath, shotsDirectory, outputPath) {
   const normalized = [];
   for (const shot of film.shots) {
     const source = join(resolve(shotsDirectory), `${shot.id}.mp4`);
-    const raw = await run("ffprobe", ["-v", "error", "-show_streams", "-of", "json", source]);
+    const raw = await runCommand("ffprobe", ["-v", "error", "-show_streams", "-of", "json", source]);
     validateProbe(JSON.parse(raw), shot, film);
     normalized.push(source);
   }
   // Concat demuxer requires matching encoding parameters; re-encode each input
   // into an identical H.264 stream to avoid codec/timebase discontinuities.
   const temporaryDir = resolve(out + ".parts");
+  // Clear parts from an earlier run first, so a crash cannot leave stale files
+  // to be concatenated into this film.
+  await rm(temporaryDir, { recursive: true, force: true });
   await mkdir(temporaryDir, { recursive: true });
-  const parts = [];
-  for (let i = 0; i < normalized.length; i++) {
-    const part = join(temporaryDir, `part-${String(i).padStart(3, "0")}.mp4`);
-    await run("ffmpeg", ["-y", "-i", normalized[i], "-an", "-vf", `fps=${film.fps},format=yuv420p`,
-      "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-      "-r", String(film.fps), "-video_track_timescale", String(film.fps * 1000),
-      "-frames:v", String(film.shots[i].frames), part]);
-    parts.push(part);
+  try {
+    const parts = [];
+    for (let i = 0; i < normalized.length; i++) {
+      const part = join(temporaryDir, `part-${String(i).padStart(3, "0")}.mp4`);
+      await runCommand("ffmpeg", ["-y", "-i", normalized[i], "-an", "-vf", `fps=${film.fps},format=yuv420p`,
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-r", String(film.fps), "-video_track_timescale", String(film.fps * 1000),
+        "-frames:v", String(film.shots[i].frames), part]);
+      parts.push(part);
+    }
+    // Use concat filter, not a shell or user-controlled concat script.
+    const args = ["-y"];
+    for (const part of parts) args.push("-i", part);
+    const labels = parts.map((_, i) => `[${i}:v:0]`).join("");
+    args.push("-filter_complex", `${labels}concat=n=${parts.length}:v=1:a=0[outv]`,
+      "-map", "[outv]", "-an", "-c:v", "libx264", "-crf", "18", "-preset", "medium",
+      "-pix_fmt", "yuv420p", "-r", String(film.fps), "-frames:v", String(film.totalFrames), out);
+    await runCommand("ffmpeg", args);
+    const finalProbe = JSON.parse(await runCommand("ffprobe", ["-v", "error", "-show_streams", "-of", "json", out]));
+    validateProbe(finalProbe, { id: "final", frames: film.totalFrames }, film);
+    return out;
+  } finally {
+    if (!keepParts) await rm(temporaryDir, { recursive: true, force: true });
   }
-  // Use concat filter, not a shell or user-controlled concat script.
-  const args = ["-y"];
-  for (const part of parts) args.push("-i", part);
-  const labels = parts.map((_, i) => `[${i}:v:0]`).join("");
-  args.push("-filter_complex", `${labels}concat=n=${parts.length}:v=1:a=0[outv]`,
-    "-map", "[outv]", "-an", "-c:v", "libx264", "-crf", "18", "-preset", "medium",
-    "-pix_fmt", "yuv420p", "-r", String(film.fps), "-frames:v", String(film.totalFrames), out);
-  await run("ffmpeg", args);
-  const finalProbe = JSON.parse(await run("ffprobe", ["-v", "error", "-show_streams", "-of", "json", out]));
-  validateProbe(finalProbe, { id: "final", frames: film.totalFrames }, film);
-  return out;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
